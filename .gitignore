@@ -1,4 +1,6 @@
 node_modules/
+uploads/
+.aws-sam/
 .DS_Store
 .env
 .env.*

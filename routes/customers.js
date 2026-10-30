@@ -17,6 +17,24 @@ router.get('/', async (req, res) => {
           ],
         }
       : {};
+
+    const hasLimit = req.query.limit != null && req.query.limit !== '';
+    if (hasLimit) {
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+      const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+      const [items, total] = await Promise.all([
+        Customer.find(filter).sort({ name: 1 }).skip(skip).limit(limit),
+        Customer.countDocuments(filter),
+      ]);
+      return res.json({
+        items,
+        total,
+        skip,
+        limit,
+        hasMore: skip + items.length < total,
+      });
+    }
+
     const customers = await Customer.find(filter).sort({ name: 1 });
     res.json(customers);
   } catch (err) {

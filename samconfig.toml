@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "smi-delivery-challan"
+resolve_s3 = true
+s3_prefix = "smi-delivery-challan"
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+disable_rollback = false
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-south-1"

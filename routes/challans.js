@@ -13,10 +13,52 @@ async function nextChallanNo() {
 
 router.get('/', async (req, res) => {
   try {
-    const challans = await DeliveryChallan.find()
+    const search = String(req.query.search || '').trim();
+    const filter = search
+      ? {
+          $or: [
+            ...(Number.isFinite(Number(search)) ? [{ challanNo: Number(search) }] : []),
+            { partyDcNo: new RegExp(search, 'i') },
+            { partyGstin: new RegExp(search, 'i') },
+          ],
+        }
+      : {};
+
+    const hasLimit = req.query.limit != null && req.query.limit !== '';
+    if (hasLimit) {
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+      const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+      const query = DeliveryChallan.find(filter)
+        .populate('customer', 'name gstin phone address')
+        .sort({ challanNo: -1 })
+        .skip(skip)
+        .limit(limit);
+      const [items, total] = await Promise.all([
+        query,
+        DeliveryChallan.countDocuments(filter),
+      ]);
+      return res.json({
+        items,
+        total,
+        skip,
+        limit,
+        hasMore: skip + items.length < total,
+      });
+    }
+
+    const challans = await DeliveryChallan.find(filter)
       .populate('customer', 'name gstin phone address')
       .sort({ challanNo: -1 });
     res.json(challans);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/next-number', async (_req, res) => {
+  try {
+    const challanNo = await nextChallanNo();
+    res.json({ challanNo });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -36,7 +78,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const {
-      date, customer, partyDcNo, partyDcDate, partyGstin, lines, notes, challanNo,
+      date, customer, partyDcNo, partyDcDate, partyGstin, lines, notes,
     } = req.body;
 
     if (!date || !customer) {
@@ -46,7 +88,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'At least one line item is required' });
     }
 
-    const no = challanNo ? Number(challanNo) : await nextChallanNo();
+    const no = await nextChallanNo();
     const challan = await DeliveryChallan.create({
       challanNo: no,
       date: new Date(date),

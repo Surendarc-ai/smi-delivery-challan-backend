@@ -1,0 +1,15 @@
+.env
+.env.*
+uploads/
+.git/
+.gitignore
+*.md
+.DS_Store
+samconfig.toml
+deploy.sh
+.aws-sam/
+coverage/
+test/
+tests/
+**/*.test.js
+node_modules/.cache/

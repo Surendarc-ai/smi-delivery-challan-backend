@@ -1,9 +1,11 @@
 import PDFDocument from 'pdfkit';
-import { getCompanyProfile, formatDisplayDate } from './company.js';
+import { formatDisplayDate, getCompanyProfile, getLogoBuffer } from './company.js';
 
-export function buildChallanPdf(challan) {
+export async function buildChallanPdf(challan) {
+  const company = await getCompanyProfile();
+  const logoBuffer = await getLogoBuffer(company.logoPath);
+
   return new Promise((resolve, reject) => {
-    const company = getCompanyProfile();
     const doc = new PDFDocument({ size: 'A4', margin: 40 });
     const chunks = [];
 
@@ -16,27 +18,45 @@ export function buildChallanPdf(challan) {
     const right = pageWidth - 40;
     const contentWidth = right - left;
 
-    // Header
-    doc.fontSize(18).font('Helvetica-Bold').text(company.name, left, 40, {
-      width: contentWidth,
-      align: 'center',
+    const logoBox = 64;
+    let textLeft = left;
+    let headerTop = 40;
+
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, left, headerTop, {
+          fit: [logoBox, logoBox],
+          align: 'center',
+          valign: 'center',
+        });
+        textLeft = left + logoBox + 14;
+      } catch (err) {
+        console.error('PDF logo render failed:', err.message);
+      }
+    }
+
+    const textWidth = right - textLeft;
+    doc.fontSize(16).font('Helvetica-Bold').text(company.name, textLeft, headerTop, {
+      width: textWidth,
+      align: logoBuffer ? 'left' : 'center',
     });
-    doc.fontSize(9).font('Helvetica').text(company.address, left, 64, {
-      width: contentWidth,
-      align: 'center',
+    doc.fontSize(9).font('Helvetica').text(company.address || '', {
+      width: textWidth,
+      align: logoBuffer ? 'left' : 'center',
     });
     doc.text(`Cell: ${company.cell}  |  E-mail: ${company.email}  |  Web: ${company.web}`, {
-      width: contentWidth,
-      align: 'center',
+      width: textWidth,
+      align: logoBuffer ? 'left' : 'center',
     });
-    doc.moveDown(0.3);
     doc.font('Helvetica-Bold').text(`GSTIN: ${company.gstin}`, {
-      width: contentWidth,
-      align: 'center',
+      width: textWidth,
+      align: logoBuffer ? 'left' : 'center',
     });
 
-    doc.moveDown(0.8);
-    doc.fontSize(14).text('DELIVERY CHALLAN', {
+    const afterHeader = Math.max(doc.y, headerTop + (logoBuffer ? logoBox : 0)) + 12;
+    doc.y = afterHeader;
+
+    doc.fontSize(14).font('Helvetica-Bold').text('DELIVERY CHALLAN', left, afterHeader, {
       width: contentWidth,
       align: 'center',
       underline: true,
@@ -59,15 +79,10 @@ export function buildChallanPdf(challan) {
     doc.font('Helvetica-Bold').text('No.', metaRightX, metaTop + 16);
     doc.font('Helvetica').text(String(challan.challanNo), metaRightX + 50, metaTop + 16);
 
-    doc.font('Helvetica').text("Party's D.C. No.", left, metaTop + 55);
-    doc.text(challan.partyDcNo || '', left + 95, metaTop + 55);
-    doc.text('Date', left + 220, metaTop + 55);
-    doc.text(formatDisplayDate(challan.partyDcDate), left + 250, metaTop + 55);
-    doc.text('GSTIN', left + 340, metaTop + 55);
-    doc.text(challan.partyGstin || customer.gstin || '', left + 380, metaTop + 55);
+    doc.font('Helvetica-Bold').text('GSTIN', left, metaTop + 55);
+    doc.font('Helvetica').text(challan.partyGstin || customer.gstin || '—', left + 50, metaTop + 55);
 
-    // Table
-    const tableTop = metaTop + 90;
+    const tableTop = metaTop + 80;
     const colNo = left;
     const colDesc = left + 50;
     const colQty = left + 430;
@@ -103,9 +118,21 @@ export function buildChallanPdf(challan) {
       y += rowH;
     }
 
-    // Footer
-    y += 40;
-    doc.fontSize(10);
+    const summary = String(challan.notes || '').trim();
+    if (summary) {
+      y += 16;
+      doc.fontSize(10).font('Helvetica-Bold').text('Summary', left, y);
+      y += 14;
+      doc.font('Helvetica').text(summary, left, y, {
+        width: contentWidth,
+        align: 'left',
+      });
+      y = doc.y + 20;
+    } else {
+      y += 40;
+    }
+
+    doc.fontSize(10).font('Helvetica');
     doc.text('Received the goods in good conditions', left, y);
     doc.text(`For ${company.name}`, left + 300, y, { width: 200, align: 'right' });
     doc.text('Signature of the Receiver', left, y + 50);

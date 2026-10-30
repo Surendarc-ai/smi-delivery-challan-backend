@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: smi-delivery-challan-backend (Express on Lambda)
+
+Parameters:
+  MongoDbUri:
+    Type: String
+    NoEcho: true
+    Description: MongoDB Atlas connection string
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT signing secret
+  ClientOrigin:
+    Type: String
+    Description: Frontend URL (comma-separated for multiple origins)
+    Default: http://localhost:5175
+  CompanyName:
+    Type: String
+    Default: SRI MEENAKSHI INDUSTRIES
+  CompanyAddress:
+    Type: String
+    Default: 'Plot No. 297, 4th Main Road, Burma Colony, Perungudi, Chennai - 600 096.'
+  CompanyCell:
+    Type: String
+    Default: '94440 88604'
+  CompanyEmail:
+    Type: String
+    Default: srimeenakshiindustries001@gmail.com
+  CompanyWeb:
+    Type: String
+    Default: srimeenakshigroups.in
+  CompanyGstin:
+    Type: String
+    Default: 33IXGPS8286H1ZP
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64
+
+Resources:
+  DeliveryChallanApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowHeaders:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        MaxAge: 600
+
+  LogoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+
+  LogoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogoBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadLogos
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${LogoBucket.Arn}/logos/*'
+
+  DeliveryChallanFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda.handler
+      CodeUri: .
+      Description: SMI Delivery Challan Express API
+      Environment:
+        Variables:
+          MONGODB_URI: !Ref MongoDbUri
+          JWT_SECRET: !Ref JwtSecret
+          CLIENT_ORIGIN: !Ref ClientOrigin
+          COMPANY_NAME: !Ref CompanyName
+          COMPANY_ADDRESS: !Ref CompanyAddress
+          COMPANY_CELL: !Ref CompanyCell
+          COMPANY_EMAIL: !Ref CompanyEmail
+          COMPANY_WEB: !Ref CompanyWeb
+          COMPANY_GSTIN: !Ref CompanyGstin
+          LOGO_S3_BUCKET: !Ref LogoBucket
+          LOGO_PUBLIC_BASE_URL: !Sub 'https://${LogoBucket}.s3.${AWS::Region}.amazonaws.com'
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref LogoBucket
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DeliveryChallanApi
+            Path: /{proxy+}
+            Method: ANY
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DeliveryChallanApi
+            Path: /
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${DeliveryChallanApi}.execute-api.${AWS::Region}.amazonaws.com'
+  HealthCheck:
+    Description: Health check URL
+    Value: !Sub 'https://${DeliveryChallanApi}.execute-api.${AWS::Region}.amazonaws.com/api/health'
+  LogoBucketName:
+    Description: S3 bucket for company logos
+    Value: !Ref LogoBucket

@@ -5,7 +5,10 @@ import authRoutes from './routes/auth.js';
 import customersRoutes from './routes/customers.js';
 import itemsRoutes from './routes/items.js';
 import challansRoutes from './routes/challans.js';
-import { getCompanyProfile } from './utils/company.js';
+import companyRoutes from './routes/company.js';
+import { ensureUploadDirs, getCompanyProfile, uploadsDir } from './utils/company.js';
+
+ensureUploadDirs();
 
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5175')
   .split(',')
@@ -26,6 +29,7 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
+app.use('/uploads', express.static(uploadsDir));
 
 app.use(async (req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -42,8 +46,15 @@ app.use('/api/auth', authRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/items', itemsRoutes);
 app.use('/api/challans', challansRoutes);
+app.use('/api/company', companyRoutes);
 
-app.get('/api/health', (_, res) => res.json({ ok: true, company: getCompanyProfile().name }));
-app.get('/api/company', (_, res) => res.json(getCompanyProfile()));
+app.get('/api/health', async (_, res) => {
+  try {
+    const company = await getCompanyProfile();
+    res.json({ ok: true, company: company.name });
+  } catch {
+    res.json({ ok: true });
+  }
+});
 
 export default app;
