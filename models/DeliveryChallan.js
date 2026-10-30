@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const lineSchema = new mongoose.Schema({
+  item: { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
   description: { type: String, required: true, trim: true },
   quantity: { type: Number, required: true, min: 0 },
   unit: { type: String, default: 'Nos' },

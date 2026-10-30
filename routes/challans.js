@@ -11,6 +11,15 @@ async function nextChallanNo() {
   return (last?.challanNo || 0) + 1;
 }
 
+function mapLineInput(l) {
+  return {
+    item: l.itemId || l.item || null,
+    description: l.description,
+    quantity: Number(l.quantity) || 0,
+    unit: l.unit || 'Nos',
+  };
+}
+
 router.get('/', async (req, res) => {
   try {
     const search = String(req.query.search || '').trim();
@@ -67,7 +76,8 @@ router.get('/next-number', async (_req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const challan = await DeliveryChallan.findById(req.params.id)
-      .populate('customer', 'name gstin phone address');
+      .populate('customer', 'name gstin phone address')
+      .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
     res.json(challan);
   } catch (err) {
@@ -96,17 +106,14 @@ router.post('/', async (req, res) => {
       partyDcNo: partyDcNo || '',
       partyDcDate: partyDcDate ? new Date(partyDcDate) : null,
       partyGstin: partyGstin || '',
-      lines: lines.map((l) => ({
-        description: l.description,
-        quantity: Number(l.quantity) || 0,
-        unit: l.unit || 'Nos',
-      })),
+      lines: lines.map(mapLineInput),
       notes: notes || '',
       createdBy: req.userId,
     });
 
     const populated = await DeliveryChallan.findById(challan._id)
-      .populate('customer', 'name gstin phone address');
+      .populate('customer', 'name gstin phone address')
+      .populate('lines.item', 'description hsnCode unit');
     res.status(201).json(populated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -126,15 +133,12 @@ router.put('/:id', async (req, res) => {
     }
     if (req.body.customer) updates.customer = req.body.customer;
     if (Array.isArray(req.body.lines)) {
-      updates.lines = req.body.lines.map((l) => ({
-        description: l.description,
-        quantity: Number(l.quantity) || 0,
-        unit: l.unit || 'Nos',
-      }));
+      updates.lines = req.body.lines.map(mapLineInput);
     }
 
     const challan = await DeliveryChallan.findByIdAndUpdate(req.params.id, updates, { new: true })
-      .populate('customer', 'name gstin phone address');
+      .populate('customer', 'name gstin phone address')
+      .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
     res.json(challan);
   } catch (err) {
@@ -155,7 +159,8 @@ router.delete('/:id', async (req, res) => {
 router.get('/:id/pdf', async (req, res) => {
   try {
     const challan = await DeliveryChallan.findById(req.params.id)
-      .populate('customer', 'name gstin phone address');
+      .populate('customer', 'name gstin phone address')
+      .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
 
     const pdf = await buildChallanPdf(challan.toObject());
