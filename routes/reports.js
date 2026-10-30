@@ -5,6 +5,7 @@ import DeliveryChallan from '../models/DeliveryChallan.js';
 import Item from '../models/Item.js';
 import Company from '../models/Company.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { formatChallanNo } from '../utils/challanNo.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -106,10 +107,11 @@ async function buildItemReport(query) {
         _id: {
           itemName: '$lineItemName',
           customer: '$customer',
+          company: '$company',
+          challanNo: '$challanNo',
         },
         qty: { $sum: { $ifNull: ['$lines.quantity', 0] } },
         unit: { $first: { $ifNull: ['$lines.unit', 'Nos'] } },
-        challanCount: { $sum: 1 },
       },
     },
     {
@@ -122,18 +124,33 @@ async function buildItemReport(query) {
     },
     { $unwind: { path: '$customerDoc', preserveNullAndEmptyArrays: true } },
     {
+      $lookup: {
+        from: 'companies',
+        localField: '_id.company',
+        foreignField: '_id',
+        as: 'companyDoc',
+      },
+    },
+    { $unwind: { path: '$companyDoc', preserveNullAndEmptyArrays: true } },
+    {
       $project: {
         _id: 0,
         customerId: '$_id.customer',
         customer: { $ifNull: ['$customerDoc.name', '—'] },
         itemName: '$_id.itemName',
+        challanNo: '$_id.challanNo',
+        companyCode: { $ifNull: ['$companyDoc.code', ''] },
         qty: 1,
         unit: 1,
-        challanCount: 1,
       },
     },
-    { $sort: { itemName: 1, customer: 1 } },
+    { $sort: { itemName: 1, customer: 1, challanNo: 1 } },
   ]);
+
+  for (const row of rows) {
+    row.dcNo = formatChallanNo(row.companyCode, row.challanNo);
+    delete row.companyCode;
+  }
 
   const totalQty = rows.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
 
@@ -175,6 +192,7 @@ router.get('/by-item/excel', async (req, res) => {
     sheet.columns = [
       { header: 'Item Name', key: 'itemName', width: 36 },
       { header: 'Customer', key: 'customer', width: 40 },
+      { header: 'DC No', key: 'dcNo', width: 18 },
       { header: 'Qty', key: 'qty', width: 12 },
       { header: 'Unit', key: 'unit', width: 10 },
     ];
@@ -185,6 +203,7 @@ router.get('/by-item/excel', async (req, res) => {
       sheet.addRow({
         itemName: row.itemName || '',
         customer: row.customer,
+        dcNo: row.dcNo || '',
         qty: Number(row.qty) || 0,
         unit: row.unit || 'Nos',
       });
@@ -194,6 +213,7 @@ router.get('/by-item/excel', async (req, res) => {
     sheet.addRow({
       itemName: 'Total',
       customer: '',
+      dcNo: '',
       qty: report.totalQty,
       unit: '',
     }).font = { bold: true };

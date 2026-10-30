@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { formatDisplayDate, getCompanyById, getCompanyProfile, getLogoBuffer, toPublicCompany } from './company.js';
+import { formatDisplayDate, getCompanyById, getLogoBuffer, toPublicCompany } from './company.js';
 import { formatChallanNo } from './challanNo.js';
 import { getPdfFormat } from './pdfFormat.js';
 
@@ -17,18 +17,39 @@ function lineParts(line) {
   return { primary: desc, secondary: '' };
 }
 
+function lineHsn(line) {
+  if (!line) return '';
+  const snap = String(line.hsnCode || '').trim();
+  if (snap) return snap;
+  if (line.item && typeof line.item === 'object') {
+    return String(line.item.hsnCode || '').trim();
+  }
+  return '';
+}
+
 function block(fmt, id) {
   return fmt.blocks?.[id] || null;
 }
 
-export async function buildChallanPdf(challan) {
-  let company = null;
-  if (challan.company && typeof challan.company === 'object' && challan.company.name) {
-    company = toPublicCompany(challan.company);
-  } else if (challan.company) {
-    company = await getCompanyById(challan.company);
+function companyIdFromChallan(challan) {
+  const ref = challan?.company;
+  if (!ref) return null;
+  if (typeof ref === 'object') {
+    return ref._id || ref.id || null;
   }
-  if (!company) company = await getCompanyProfile();
+  return ref;
+}
+
+export async function buildChallanPdf(challan) {
+  // Always use the challan's selected company (name, address, logo, GSTIN, code).
+  const companyId = companyIdFromChallan(challan);
+  let company = await getCompanyById(companyId);
+  if (!company && challan.company && typeof challan.company === 'object' && challan.company.name) {
+    company = toPublicCompany(challan.company);
+  }
+  if (!company) {
+    throw new Error('Company not found for this challan');
+  }
 
   const fmt = await getPdfFormat();
   const logoBuf = await getLogoBuffer(company.logoPath);
@@ -116,9 +137,12 @@ export async function buildChallanPdf(challan) {
 
     const table = block(fmt, 'itemsTable');
     if (table?.visible) {
+      const hsnW = 72;
+      const qtyW = 85;
       const colNo = table.x;
       const colDesc = table.x + 50;
-      const colQty = table.x + table.w - 85;
+      const colHsn = table.x + table.w - qtyW - hsnW;
+      const colQty = table.x + table.w - qtyW;
       const headerH = 24;
       const rowH = 24;
       const lines = challan.lines?.length ? challan.lines : [];
@@ -126,13 +150,16 @@ export async function buildChallanPdf(challan) {
       const maxRows = Math.max(1, Math.floor((table.h - headerH) / rowH));
       const rows = Math.min(minRows, maxRows);
       const itemFont = fmt.itemBold ? 'Helvetica-Bold' : 'Helvetica';
+      const descMaxW = Math.max(40, colHsn - colDesc - 12);
 
       doc.rect(table.x, table.y, table.w, headerH).stroke();
       doc.fontSize(body).font('Helvetica-Bold');
       doc.text('S.No.', colNo + 8, table.y + 7);
       doc.text(fmt.itemColumnLabel, colDesc + 8, table.y + 7);
+      doc.text('HSN', colHsn + 6, table.y + 7);
       doc.text(fmt.qtyColumnLabel, colQty + 8, table.y + 7);
       doc.moveTo(colDesc, table.y).lineTo(colDesc, table.y + headerH).stroke();
+      doc.moveTo(colHsn, table.y).lineTo(colHsn, table.y + headerH).stroke();
       doc.moveTo(colQty, table.y).lineTo(colQty, table.y + headerH).stroke();
 
       let y = table.y + headerH;
@@ -140,23 +167,37 @@ export async function buildChallanPdf(challan) {
         const line = lines[i];
         doc.rect(table.x, y, table.w, rowH).stroke();
         doc.moveTo(colDesc, y).lineTo(colDesc, y + rowH).stroke();
+        doc.moveTo(colHsn, y).lineTo(colHsn, y + rowH).stroke();
         doc.moveTo(colQty, y).lineTo(colQty, y + rowH).stroke();
 
         if (line) {
           const { primary, secondary } = lineParts(line);
+          const hsn = lineHsn(line);
           doc.fontSize(body).font('Helvetica').text(String(i + 1), colNo + 8, y + 7);
           doc.fontSize(fmt.itemFontSize).font(itemFont);
-          const primaryW = doc.widthOfString(primary || '');
-          doc.text(primary || '', colDesc + 8, y + 7, { lineBreak: false });
+          const primaryW = Math.min(doc.widthOfString(primary || ''), descMaxW);
+          doc.text(primary || '', colDesc + 8, y + 7, {
+            width: descMaxW,
+            lineBreak: false,
+            ellipsis: true,
+          });
           if (secondary) {
             doc.fontSize(fmt.itemNoteFontSize).font('Helvetica').fillColor('#555555')
-              .text(` (${secondary})`, colDesc + 8 + primaryW, y + 8.5, { lineBreak: false });
+              .text(` (${secondary})`, colDesc + 8 + primaryW, y + 8.5, {
+                width: Math.max(20, descMaxW - primaryW),
+                lineBreak: false,
+                ellipsis: true,
+              });
             doc.fillColor('#000000');
           }
+          doc.fontSize(body).font('Helvetica').text(hsn, colHsn + 6, y + 7, {
+            width: hsnW - 10,
+            lineBreak: false,
+          });
           const qtyText = line.quantity != null && line.quantity !== ''
             ? `${line.quantity} ${line.unit || 'Nos'}`
             : '';
-          doc.fontSize(body).font('Helvetica').text(qtyText, colQty + 8, y + 7, { width: 70 });
+          doc.fontSize(body).font('Helvetica').text(qtyText, colQty + 8, y + 7, { width: qtyW - 12 });
         }
         y += rowH;
       }

@@ -4,6 +4,7 @@ const lineSchema = new mongoose.Schema({
   item: { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
   itemName: { type: String, default: '', trim: true },
   description: { type: String, required: true, trim: true },
+  hsnCode: { type: String, default: '', trim: true },
   quantity: { type: Number, required: true, min: 0 },
   unit: { type: String, default: 'Nos' },
 }, { _id: false });
@@ -18,6 +19,7 @@ const deliveryChallanSchema = new mongoose.Schema({
   partyGstin: { type: String, default: '' },
   lines: { type: [lineSchema], default: [] },
   notes: { type: String, default: '' },
+  billed: { type: Boolean, default: false },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 

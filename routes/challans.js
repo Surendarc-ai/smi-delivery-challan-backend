@@ -52,6 +52,7 @@ function mapLineInput(l) {
     item: itemId || null,
     itemName,
     description: description || itemName || 'Item',
+    hsnCode: String(l.hsnCode || '').trim(),
     quantity: Number(l.quantity) || 0,
     unit: l.unit || 'Nos',
   };
@@ -195,6 +196,7 @@ router.put('/:id', async (req, res) => {
     }
     if (req.body.customer) updates.customer = req.body.customer;
     if (req.body.company) updates.company = await resolveCompanyId(req.body.company);
+    if (typeof req.body.billed === 'boolean') updates.billed = req.body.billed;
     if (Array.isArray(req.body.lines)) {
       updates.lines = req.body.lines.map(mapLineInput);
     }
@@ -203,6 +205,23 @@ router.put('/:id', async (req, res) => {
       .populate('company', companyPopulate)
       .populate('customer', customerPopulate)
       .populate('lines.item', 'description hsnCode unit');
+    if (!challan) return res.status(404).json({ error: 'Challan not found' });
+    res.json(challan);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/:id/billed', async (req, res) => {
+  try {
+    if (typeof req.body?.billed !== 'boolean') {
+      return res.status(400).json({ error: 'billed must be true or false' });
+    }
+    const challan = await DeliveryChallan.findByIdAndUpdate(
+      req.params.id,
+      { billed: req.body.billed },
+      { new: true },
+    ).select('_id billed');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
     res.json(challan);
   } catch (err) {
@@ -225,10 +244,14 @@ router.get('/:id/pdf', async (req, res) => {
     const challan = await DeliveryChallan.findById(req.params.id)
       .populate('company', companyPopulate)
       .populate('customer', customerPopulate)
-      .populate('lines.item', 'description hsnCode unit');
+      .populate('lines.item', 'description hsnCode unit')
+      .lean();
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
+    if (!challan.company) {
+      return res.status(400).json({ error: 'Challan has no company selected' });
+    }
 
-    const pdf = await buildChallanPdf(challan.toObject());
+    const pdf = await buildChallanPdf(challan);
     const displayNo = formatChallanNo(challan.company?.code, challan.challanNo).replaceAll('/', '-');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
