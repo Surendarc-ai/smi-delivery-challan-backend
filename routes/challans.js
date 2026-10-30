@@ -12,9 +12,13 @@ async function nextChallanNo() {
 }
 
 function mapLineInput(l) {
+  const itemId = l.itemId || l.item || null;
+  const itemName = String(l.itemName || '').trim();
+  const description = String(l.description || '').trim();
   return {
-    item: l.itemId || l.item || null,
-    description: l.description,
+    item: itemId || null,
+    itemName,
+    description: description || itemName || 'Item',
     quantity: Number(l.quantity) || 0,
     unit: l.unit || 'Nos',
   };
@@ -38,7 +42,7 @@ router.get('/', async (req, res) => {
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
       const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
       const query = DeliveryChallan.find(filter)
-        .populate('customer', 'name gstin phone address')
+        .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
         .sort({ challanNo: -1 })
         .skip(skip)
         .limit(limit);
@@ -56,7 +60,7 @@ router.get('/', async (req, res) => {
     }
 
     const challans = await DeliveryChallan.find(filter)
-      .populate('customer', 'name gstin phone address')
+      .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
       .sort({ challanNo: -1 });
     res.json(challans);
   } catch (err) {
@@ -76,7 +80,7 @@ router.get('/next-number', async (_req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const challan = await DeliveryChallan.findById(req.params.id)
-      .populate('customer', 'name gstin phone address')
+      .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
       .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
     res.json(challan);
@@ -112,7 +116,7 @@ router.post('/', async (req, res) => {
     });
 
     const populated = await DeliveryChallan.findById(challan._id)
-      .populate('customer', 'name gstin phone address')
+      .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
       .populate('lines.item', 'description hsnCode unit');
     res.status(201).json(populated);
   } catch (err) {
@@ -137,7 +141,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const challan = await DeliveryChallan.findByIdAndUpdate(req.params.id, updates, { new: true })
-      .populate('customer', 'name gstin phone address')
+      .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
       .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
     res.json(challan);
@@ -159,7 +163,7 @@ router.delete('/:id', async (req, res) => {
 router.get('/:id/pdf', async (req, res) => {
   try {
     const challan = await DeliveryChallan.findById(req.params.id)
-      .populate('customer', 'name gstin phone address')
+      .populate('customer', 'name gstin phone address shippingAddress shippingSameAsBilling')
       .populate('lines.item', 'description hsnCode unit');
     if (!challan) return res.status(404).json({ error: 'Challan not found' });
 

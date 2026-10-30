@@ -6,6 +6,7 @@ import customersRoutes from './routes/customers.js';
 import itemsRoutes from './routes/items.js';
 import challansRoutes from './routes/challans.js';
 import companyRoutes from './routes/company.js';
+import pdfFormatRoutes from './routes/pdfFormat.js';
 import { ensureUploadDirs, getCompanyProfile, uploadsDir } from './utils/company.js';
 
 ensureUploadDirs();
@@ -47,6 +48,7 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/items', itemsRoutes);
 app.use('/api/challans', challansRoutes);
 app.use('/api/company', companyRoutes);
+app.use('/api/pdf-format', pdfFormatRoutes);
 
 app.get('/api/health', async (_, res) => {
   try {

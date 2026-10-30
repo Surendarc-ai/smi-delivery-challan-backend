@@ -5,6 +5,21 @@ import { authMiddleware } from '../middleware/auth.js';
 const router = Router();
 router.use(authMiddleware);
 
+function customerPayload(body) {
+  const shippingSameAsBilling = body.shippingSameAsBilling === true
+    || body.shippingSameAsBilling === 'true';
+  const address = body.address || '';
+  return {
+    name: String(body.name || '').trim(),
+    address,
+    shippingSameAsBilling,
+    shippingAddress: shippingSameAsBilling ? address : (body.shippingAddress || ''),
+    gstin: body.gstin || '',
+    phone: body.phone || '',
+    email: body.email || '',
+  };
+}
+
 router.get('/', async (req, res) => {
   try {
     const search = String(req.query.search || '').trim();
@@ -44,15 +59,9 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, address, gstin, phone, email } = req.body;
-    if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
-    const customer = await Customer.create({
-      name: name.trim(),
-      address: address || '',
-      gstin: gstin || '',
-      phone: phone || '',
-      email: email || '',
-    });
+    const data = customerPayload(req.body);
+    if (!data.name) return res.status(400).json({ error: 'Name is required' });
+    const customer = await Customer.create(data);
     res.status(201).json(customer);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -61,11 +70,9 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const updates = {};
-    for (const key of ['name', 'address', 'gstin', 'phone', 'email']) {
-      if (req.body[key] != null) updates[key] = req.body[key];
-    }
-    const customer = await Customer.findByIdAndUpdate(req.params.id, updates, { new: true });
+    const data = customerPayload(req.body);
+    if (!data.name) return res.status(400).json({ error: 'Name is required' });
+    const customer = await Customer.findByIdAndUpdate(req.params.id, data, { new: true });
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
     res.json(customer);
   } catch (err) {
