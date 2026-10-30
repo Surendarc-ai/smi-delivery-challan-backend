@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
-import { formatDisplayDate, getCompanyProfile, getLogoBuffer } from './company.js';
+import { formatDisplayDate, getCompanyById, getCompanyProfile, getLogoBuffer, toPublicCompany } from './company.js';
+import { formatChallanNo } from './challanNo.js';
 import { getPdfFormat } from './pdfFormat.js';
 
 function lineParts(line) {
@@ -21,7 +22,14 @@ function block(fmt, id) {
 }
 
 export async function buildChallanPdf(challan) {
-  const company = await getCompanyProfile();
+  let company = null;
+  if (challan.company && typeof challan.company === 'object' && challan.company.name) {
+    company = toPublicCompany(challan.company);
+  } else if (challan.company) {
+    company = await getCompanyById(challan.company);
+  }
+  if (!company) company = await getCompanyProfile();
+
   const fmt = await getPdfFormat();
   const logoBuf = await getLogoBuffer(company.logoPath);
 
@@ -74,8 +82,9 @@ export async function buildChallanPdf(challan) {
 
     const noBlk = block(fmt, 'challanNo');
     if (noBlk?.visible) {
+      const displayNo = formatChallanNo(company.code, challan.challanNo);
       doc.fontSize(body).font('Helvetica-Bold').text('No.', noBlk.x, noBlk.y);
-      doc.font('Helvetica').text(String(challan.challanNo), noBlk.x + 28, noBlk.y);
+      doc.font('Helvetica').text(displayNo, noBlk.x + 28, noBlk.y);
     }
 
     const bill = block(fmt, 'billTo');

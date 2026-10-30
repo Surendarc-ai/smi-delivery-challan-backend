@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 
 const lineSchema = new mongoose.Schema({
   item: { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
-  /** Snapshot of catalog item name so PDF/UI still work if item is missing. */
   itemName: { type: String, default: '', trim: true },
   description: { type: String, required: true, trim: true },
   quantity: { type: Number, required: true, min: 0 },
@@ -10,7 +9,8 @@ const lineSchema = new mongoose.Schema({
 }, { _id: false });
 
 const deliveryChallanSchema = new mongoose.Schema({
-  challanNo: { type: Number, required: true, unique: true },
+  company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
+  challanNo: { type: Number, required: true },
   date: { type: Date, required: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
   partyDcNo: { type: String, default: '' },
@@ -20,5 +20,7 @@ const deliveryChallanSchema = new mongoose.Schema({
   notes: { type: String, default: '' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
+
+deliveryChallanSchema.index({ company: 1, challanNo: 1 }, { unique: true });
 
 export default mongoose.model('DeliveryChallan', deliveryChallanSchema);
