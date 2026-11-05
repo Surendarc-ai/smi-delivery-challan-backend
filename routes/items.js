@@ -43,12 +43,13 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { description, unit, hsnCode } = req.body;
+    const { description, unit, hsnCode, rate } = req.body;
     if (!description?.trim()) return res.status(400).json({ error: 'Description is required' });
     const item = await Item.create({
       description: description.trim(),
       hsnCode: String(hsnCode || '').trim(),
       unit: unit || 'Nos',
+      rate: Number(rate) || 0,
     });
     res.status(201).json(item);
   } catch (err) {
@@ -62,6 +63,7 @@ router.put('/:id', async (req, res) => {
     if (req.body.description != null) updates.description = req.body.description;
     if (req.body.hsnCode != null) updates.hsnCode = String(req.body.hsnCode).trim();
     if (req.body.unit != null) updates.unit = req.body.unit;
+    if (req.body.rate != null) updates.rate = Number(req.body.rate) || 0;
     const item = await Item.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!item) return res.status(404).json({ error: 'Item not found' });
     res.json(item);

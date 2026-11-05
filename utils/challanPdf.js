@@ -27,29 +27,51 @@ function lineHsn(line) {
   return '';
 }
 
-function block(fmt, id) {
-  return fmt.blocks?.[id] || null;
+function lineRate(line) {
+  const fromLine = Number(line?.rate);
+  if (Number.isFinite(fromLine) && fromLine > 0) return fromLine;
+  if (line?.item && typeof line.item === 'object') {
+    const fromItem = Number(line.item.rate);
+    if (Number.isFinite(fromItem) && fromItem > 0) return fromItem;
+  }
+  return Number.isFinite(fromLine) ? fromLine : 0;
 }
 
 function companyIdFromChallan(challan) {
   const ref = challan?.company;
   if (!ref) return null;
-  if (typeof ref === 'object') {
-    return ref._id || ref.id || null;
-  }
+  if (typeof ref === 'object') return ref._id || ref.id || null;
   return ref;
 }
 
+function fmtNum(n, decimals = false) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '';
+  if (decimals || !Number.isInteger(v)) return v.toFixed(2);
+  return String(v);
+}
+
+function fmtMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '0.00';
+  return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function drawHLine(doc, x1, x2, y) {
+  doc.moveTo(x1, y).lineTo(x2, y).stroke();
+}
+
+function drawVLine(doc, x, y1, y2) {
+  doc.moveTo(x, y1).lineTo(x, y2).stroke();
+}
+
 export async function buildChallanPdf(challan) {
-  // Always use the challan's selected company (name, address, logo, GSTIN, code).
   const companyId = companyIdFromChallan(challan);
   let company = await getCompanyById(companyId);
   if (!company && challan.company && typeof challan.company === 'object' && challan.company.name) {
     company = toPublicCompany(challan.company);
   }
-  if (!company) {
-    throw new Error('Company not found for this challan');
-  }
+  if (!company) throw new Error('Company not found for this challan');
 
   const fmt = await getPdfFormat();
   const logoBuf = await getLogoBuffer(company.logoPath);
@@ -61,166 +83,277 @@ export async function buildChallanPdf(challan) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    const pageW = 595.28;
+    const pageH = 841.89;
+    const m = 24;
+    const left = m;
+    const right = pageW - m;
+    const width = right - left;
+    const leftColW = Math.round(width * 0.55);
+    const midX = left + leftColW;
+    const body = fmt.bodyFontSize || 9;
+    const small = Math.max(7, body - 1);
+
     const customer = challan.customer || {};
     const billAddress = String(customer.address || '').trim();
     const shipAddress = customer.shippingSameAsBilling === true
       ? billAddress
       : String(customer.shippingAddress || '').trim();
-    const body = fmt.bodyFontSize;
+    const displayNo = formatChallanNo(company.code, challan.challanNo);
+    const lines = Array.isArray(challan.lines) ? challan.lines : [];
 
-    const logo = block(fmt, 'logo');
-    if (logo?.visible && logoBuf) {
+    doc.lineWidth(1);
+
+    // Single outer border for whole page content (drawn at end once we know height)
+    const contentTop = m;
+    let y = contentTop;
+    const titleH = 22;
+    doc.fontSize(fmt.titleFontSize || 12).font('Helvetica-Bold')
+      .text(fmt.titleText || 'DELIVERY CHALLAN', left, y + 5, { width, align: 'center' });
+    // Title cell border
+    doc.rect(left, y, width, titleH).stroke();
+    y += titleH;
+
+    // Left stack + right meta share the same horizontal row heights
+    const companyH = 70;
+    const partyH = 56;
+    const rowHs = [companyH, partyH, partyH];
+    const leftStackH = rowHs.reduce((a, b) => a + b, 0);
+    const headerTop = y;
+
+    doc.rect(left, headerTop, leftColW, leftStackH).stroke();
+    doc.rect(midX, headerTop, right - midX, leftStackH).stroke();
+
+    // Full-width horizontals so left/right lines align
+    let accY = headerTop;
+    for (let i = 0; i < rowHs.length - 1; i += 1) {
+      accY += rowHs[i];
+      drawHLine(doc, left, right, accY);
+    }
+
+    // --- Company (logo + address + GSTIN + contact) ---
+    const companyTop = headerTop;
+    const logoSize = 26;
+    const logoPad = 5;
+    let textX = left + 6;
+    let textY = companyTop + 4;
+    if (logoBuf) {
       try {
-        doc.image(logoBuf, logo.x, logo.y, { fit: [logo.w, logo.h] });
+        doc.image(logoBuf, left + logoPad, companyTop + logoPad, { fit: [logoSize, logoSize] });
+        textX = left + logoPad + logoSize + 8;
       } catch (err) {
         console.error('PDF logo render failed:', err.message);
       }
     }
+    const textW = midX - textX - 6;
+    doc.fontSize(Math.min(fmt.companyNameFontSize || 11, 11)).font('Helvetica-Bold')
+      .text(company.name || '', textX, textY, { width: textW, lineGap: 0 });
+    textY = doc.y + 2;
 
-    const companyBlk = block(fmt, 'company');
-    if (companyBlk?.visible) {
-      doc.fontSize(fmt.companyNameFontSize).font('Helvetica-Bold')
-        .text(company.name, companyBlk.x, companyBlk.y, { width: companyBlk.w });
-      doc.fontSize(body - 1).font('Helvetica')
-        .text(company.address || '', companyBlk.x, doc.y, { width: companyBlk.w });
-      doc.text(`Cell: ${company.cell}  |  E-mail: ${company.email}  |  Web: ${company.web}`, {
-        width: companyBlk.w,
+    if (company.address) {
+      doc.fontSize(7).font('Helvetica')
+        .text(company.address, textX, textY, { width: textW, lineGap: 1 });
+      textY = doc.y + 2;
+    }
+    if (company.gstin) {
+      doc.fontSize(7).font('Helvetica-Bold')
+        .text(`GSTIN: ${company.gstin}`, textX, textY, { width: textW, lineBreak: false });
+      textY += 10;
+    }
+    const contactBits = [
+      company.cell ? `Cell: ${company.cell}` : '',
+      company.email ? `E-Mail: ${company.email}` : '',
+    ].filter(Boolean).join(' | ');
+    if (contactBits) {
+      doc.fontSize(7).font('Helvetica')
+        .text(contactBits, textX, textY, { width: textW, lineBreak: false });
+    }
+
+    // --- Consignee / Buyer ---
+    function drawPartyBlock(top, h, title, name, address) {
+      doc.fontSize(7).font('Helvetica').fillColor('#555555')
+        .text(title, left + 6, top + 3, { width: leftColW - 12, lineBreak: false });
+      doc.fillColor('#000000').fontSize(body).font('Helvetica-Bold')
+        .text(name || '—', left + 6, top + 13, { width: leftColW - 12, lineBreak: false });
+      if (address) {
+        doc.fontSize(7).font('Helvetica')
+          .text(address, left + 6, top + 25, { width: leftColW - 12, height: h - 28, lineGap: 0 });
+      }
+    }
+
+    drawPartyBlock(
+      companyTop + companyH,
+      partyH,
+      'Consignee (Ship to)',
+      customer.name,
+      shipAddress || billAddress,
+    );
+    drawPartyBlock(
+      companyTop + companyH + partyH,
+      partyH,
+      'Buyer (Bill to)',
+      customer.name,
+      billAddress,
+    );
+
+    // --- Right meta (same row heights as left) ---
+    const metaW = right - midX;
+    const metaRows = [
+      [['Challan No.', displayNo], ['Dated', formatDisplayDate(challan.date)]],
+      [["Party's D.C. No.", challan.partyDcNo || ''], ['Party D.C. Date', challan.partyDcDate ? formatDisplayDate(challan.partyDcDate) : '']],
+      [['', ''], ['Company Code', company.code || '']],
+    ];
+    const metaColW = metaW / 2;
+    let metaY = headerTop;
+    for (let r = 0; r < metaRows.length; r += 1) {
+      const rowHMeta = rowHs[r];
+      drawVLine(doc, midX + metaColW, metaY, metaY + rowHMeta);
+      for (let c = 0; c < 2; c += 1) {
+        const [label, value] = metaRows[r][c];
+        const cx = midX + c * metaColW;
+        if (!label && !value) continue;
+        doc.fontSize(6.5).font('Helvetica').fillColor('#555555')
+          .text(label, cx + 4, metaY + 4, { width: metaColW - 8, lineBreak: false });
+        doc.fillColor('#000000').fontSize(small).font('Helvetica-Bold')
+          .text(value || ' ', cx + 4, metaY + 15, { width: metaColW - 8, lineBreak: false });
+      }
+      metaY += rowHMeta;
+    }
+
+    y = headerTop + leftStackH;
+
+    // Items table
+    const colNoW = 26;
+    const colHsnW = 52;
+    const colQtyW = 44;
+    const colRateW = 54;
+    const colAmtW = 68;
+    const colDescW = width - colNoW - colHsnW - colQtyW - colRateW - colAmtW;
+    const cols = [
+      { x: left, w: colNoW, label: 'Sl' },
+      { x: left + colNoW, w: colDescW, label: 'Description of Goods' },
+      { x: left + colNoW + colDescW, w: colHsnW, label: 'HSN' },
+      { x: left + colNoW + colDescW + colHsnW, w: colQtyW, label: 'Qty' },
+      { x: left + colNoW + colDescW + colHsnW + colQtyW, w: colRateW, label: 'Rate' },
+      { x: left + colNoW + colDescW + colHsnW + colQtyW + colRateW, w: colAmtW, label: 'Amount' },
+    ];
+
+    const headerH2 = 18;
+    const rowH = 18;
+    const footerReserve = 100; // total + summary + authorised signature
+    const minEmpty = Math.min(Number(fmt.minEmptyRows) || 6, 6);
+    const minRows = Math.max(lines.length, minEmpty);
+    const maxRows = Math.max(1, Math.floor((pageH - m - footerReserve - y - headerH2) / rowH));
+    const rows = Math.min(minRows, maxRows);
+    const tableH = headerH2 + rows * rowH;
+    const tableTop = y;
+
+    // Items: no cell borders — header labels + rows only
+    doc.fontSize(7).font('Helvetica-Bold');
+    for (const c of cols) {
+      const alignRight = c.label === 'Qty' || c.label === 'Rate' || c.label === 'Amount';
+      doc.text(c.label, c.x + 2, tableTop + 4, {
+        width: c.w - 4,
+        lineBreak: false,
+        align: alignRight ? 'right' : 'left',
       });
-      doc.font('Helvetica-Bold').text(`GSTIN: ${company.gstin}`, { width: companyBlk.w });
     }
+    drawHLine(doc, left, right, tableTop + headerH2);
 
-    const title = block(fmt, 'title');
-    if (title?.visible) {
-      doc.fontSize(fmt.titleFontSize).font('Helvetica-Bold')
-        .text(fmt.titleText, title.x, title.y, { width: title.w, align: 'center', underline: true });
-    }
+    const itemFont = fmt.itemBold ? 'Helvetica-Bold' : 'Helvetica';
+    let totalAmount = 0;
 
-    const dateBlk = block(fmt, 'date');
-    if (dateBlk?.visible) {
-      doc.fontSize(body).font('Helvetica-Bold').text('Date', dateBlk.x, dateBlk.y);
-      doc.font('Helvetica').text(formatDisplayDate(challan.date), dateBlk.x + 40, dateBlk.y);
-    }
+    for (let i = 0; i < rows; i += 1) {
+      const rowY = tableTop + headerH2 + i * rowH;
+      const line = lines[i];
+      if (!line) continue;
 
-    const noBlk = block(fmt, 'challanNo');
-    if (noBlk?.visible) {
-      const displayNo = formatChallanNo(company.code, challan.challanNo);
-      doc.fontSize(body).font('Helvetica-Bold').text('No.', noBlk.x, noBlk.y);
-      doc.font('Helvetica').text(displayNo, noBlk.x + 28, noBlk.y);
-    }
+      const { primary, secondary } = lineParts(line);
+      const hsn = lineHsn(line);
+      const qty = Number(line.quantity) || 0;
+      const rate = lineRate(line);
+      const amount = line.amount != null && line.amount !== '' && Number(line.amount) > 0
+        ? Number(line.amount) || 0
+        : Math.round(qty * rate * 100) / 100;
+      totalAmount += amount;
 
-    const bill = block(fmt, 'billTo');
-    if (bill?.visible) {
-      doc.fontSize(body).font('Helvetica-Bold').text('Bill To', bill.x, bill.y);
-      doc.font('Helvetica-Bold').text('M/s', bill.x, bill.y + 14);
-      doc.font('Helvetica').text(customer.name || '—', bill.x + 28, bill.y + 14, { width: bill.w - 28 });
-      if (billAddress) {
-        doc.text(billAddress, bill.x + 28, doc.y + 2, { width: bill.w - 28, height: bill.h - 32 });
-      }
-    }
-
-    const ship = block(fmt, 'shipTo');
-    if (ship?.visible) {
-      doc.fontSize(body).font('Helvetica-Bold').text('Ship To', ship.x, ship.y);
-      doc.font('Helvetica-Bold').text('M/s', ship.x, ship.y + 14);
-      doc.font('Helvetica').text(customer.name || '—', ship.x + 28, ship.y + 14, { width: ship.w - 28 });
-      // Only show ship address when set (or same-as-bill); never fall back to bill otherwise
-      if (shipAddress) {
-        doc.text(shipAddress, ship.x + 28, doc.y + 2, { width: ship.w - 28, height: ship.h - 32 });
-      }
-    }
-
-    const gstin = block(fmt, 'gstin');
-    if (gstin?.visible) {
-      doc.fontSize(body).font('Helvetica-Bold').text('GSTIN', gstin.x, gstin.y);
-      doc.font('Helvetica').text(challan.partyGstin || customer.gstin || '—', gstin.x + 50, gstin.y);
-    }
-
-    const table = block(fmt, 'itemsTable');
-    if (table?.visible) {
-      const hsnW = 72;
-      const qtyW = 85;
-      const colNo = table.x;
-      const colDesc = table.x + 50;
-      const colHsn = table.x + table.w - qtyW - hsnW;
-      const colQty = table.x + table.w - qtyW;
-      const headerH = 24;
-      const rowH = 24;
-      const lines = challan.lines?.length ? challan.lines : [];
-      const minRows = Math.max(lines.length, fmt.minEmptyRows);
-      const maxRows = Math.max(1, Math.floor((table.h - headerH) / rowH));
-      const rows = Math.min(minRows, maxRows);
-      const itemFont = fmt.itemBold ? 'Helvetica-Bold' : 'Helvetica';
-      const descMaxW = Math.max(40, colHsn - colDesc - 12);
-
-      doc.rect(table.x, table.y, table.w, headerH).stroke();
-      doc.fontSize(body).font('Helvetica-Bold');
-      doc.text('S.No.', colNo + 8, table.y + 7);
-      doc.text(fmt.itemColumnLabel, colDesc + 8, table.y + 7);
-      doc.text('HSN', colHsn + 6, table.y + 7);
-      doc.text(fmt.qtyColumnLabel, colQty + 8, table.y + 7);
-      doc.moveTo(colDesc, table.y).lineTo(colDesc, table.y + headerH).stroke();
-      doc.moveTo(colHsn, table.y).lineTo(colHsn, table.y + headerH).stroke();
-      doc.moveTo(colQty, table.y).lineTo(colQty, table.y + headerH).stroke();
-
-      let y = table.y + headerH;
-      for (let i = 0; i < rows; i += 1) {
-        const line = lines[i];
-        doc.rect(table.x, y, table.w, rowH).stroke();
-        doc.moveTo(colDesc, y).lineTo(colDesc, y + rowH).stroke();
-        doc.moveTo(colHsn, y).lineTo(colHsn, y + rowH).stroke();
-        doc.moveTo(colQty, y).lineTo(colQty, y + rowH).stroke();
-
-        if (line) {
-          const { primary, secondary } = lineParts(line);
-          const hsn = lineHsn(line);
-          doc.fontSize(body).font('Helvetica').text(String(i + 1), colNo + 8, y + 7);
-          doc.fontSize(fmt.itemFontSize).font(itemFont);
-          const primaryW = Math.min(doc.widthOfString(primary || ''), descMaxW);
-          doc.text(primary || '', colDesc + 8, y + 7, {
-            width: descMaxW,
+      const numSize = 7;
+      doc.fontSize(numSize).font('Helvetica').text(String(i + 1), cols[0].x + 2, rowY + 4, {
+        width: cols[0].w - 4,
+        lineBreak: false,
+      });
+      // Item name, then description on next line — no parentheses wrapping
+      doc.fontSize(fmt.itemFontSize || 8).font(itemFont);
+      doc.text(primary || '', cols[1].x + 2, rowY + 2, {
+        width: cols[1].w - 4,
+        lineBreak: false,
+        ellipsis: true,
+      });
+      if (secondary) {
+        doc.fontSize(fmt.itemNoteFontSize || 7).font('Helvetica')
+          .text(secondary, cols[1].x + 2, rowY + 10, {
+            width: cols[1].w - 4,
             lineBreak: false,
             ellipsis: true,
           });
-          if (secondary) {
-            doc.fontSize(fmt.itemNoteFontSize).font('Helvetica').fillColor('#555555')
-              .text(` (${secondary})`, colDesc + 8 + primaryW, y + 8.5, {
-                width: Math.max(20, descMaxW - primaryW),
-                lineBreak: false,
-                ellipsis: true,
-              });
-            doc.fillColor('#000000');
-          }
-          doc.fontSize(body).font('Helvetica').text(hsn, colHsn + 6, y + 7, {
-            width: hsnW - 10,
-            lineBreak: false,
-          });
-          const qtyText = line.quantity != null && line.quantity !== ''
-            ? `${line.quantity} ${line.unit || 'Nos'}`
-            : '';
-          doc.fontSize(body).font('Helvetica').text(qtyText, colQty + 8, y + 7, { width: qtyW - 12 });
-        }
-        y += rowH;
       }
+      doc.fontSize(numSize).font('Helvetica');
+      doc.text(hsn, cols[2].x + 2, rowY + 4, { width: cols[2].w - 4, lineBreak: false });
+      doc.text(fmtNum(qty), cols[3].x + 2, rowY + 4, { width: cols[3].w - 4, align: 'right' });
+      doc.text(fmtNum(rate, true), cols[4].x + 2, rowY + 4, { width: cols[4].w - 4, align: 'right' });
+      doc.text(fmtMoney(amount), cols[5].x + 2, rowY + 4, { width: cols[5].w - 4, align: 'right' });
     }
 
-    const summaryBlk = block(fmt, 'summary');
-    const summary = String(challan.notes || '').trim();
-    if (summaryBlk?.visible && summary) {
-      doc.fontSize(body).font('Helvetica-Bold').text('Summary', summaryBlk.x, summaryBlk.y);
-      doc.font('Helvetica').text(summary, summaryBlk.x, summaryBlk.y + 14, {
-        width: summaryBlk.w,
-        height: summaryBlk.h - 14,
+    y = tableTop + tableH;
+
+    // Total (no CGST, no item cell borders)
+    drawHLine(doc, left, right, y);
+    const totalH = 20;
+    doc.fontSize(body).font('Helvetica-Bold')
+      .text('Total', cols[4].x - 30, y + 5, { width: cols[4].w + 28, align: 'right' });
+    doc.text(fmtMoney(totalAmount), cols[5].x + 2, y + 5, {
+      width: cols[5].w - 4,
+      align: 'right',
+    });
+    y += totalH;
+    drawHLine(doc, left, right, y);
+
+    // Summary only (no amount-in-words)
+    const notes = String(challan.notes || '').trim();
+    if (notes) {
+      const summaryH = 36;
+      doc.rect(left, y, width, summaryH).stroke();
+      doc.fontSize(7).font('Helvetica').fillColor('#555555')
+        .text('Summary', left + 5, y + 4, { width: width - 10, lineBreak: false });
+      doc.fillColor('#000000').fontSize(body).font('Helvetica')
+        .text(notes, left + 5, y + 14, { width: width - 10, height: 18, ellipsis: true });
+      y += summaryH;
+    }
+
+    // Authorised signature only
+    const sigH = 64;
+    doc.rect(left, y, width, sigH).stroke();
+    doc.fontSize(body).font('Helvetica-Bold')
+      .text(`For ${company.name}`, left + 8, y + 10, {
+        width: width - 16,
+        align: 'right',
       });
-    }
+    doc.fontSize(8).font('Helvetica')
+      .text('Authorised Signature', left + 8, y + sigH - 16, {
+        width: width - 16,
+        align: 'right',
+      });
+    y += sigH;
 
-    const sig = block(fmt, 'signatures');
-    if (sig?.visible) {
-      const mid = sig.x + sig.w / 2;
-      doc.fontSize(body).font('Helvetica').text(fmt.receiverText, sig.x, sig.y, { width: sig.w / 2 - 10 });
-      doc.text(`For ${company.name}`, mid, sig.y, { width: sig.w / 2, align: 'right' });
-      doc.text('Signature of the Receiver', sig.x, sig.y + 50, { width: sig.w / 2 - 10 });
-      doc.text('Authorised Signature', mid, sig.y + 50, { width: sig.w / 2, align: 'right' });
-    }
+    // Outer border around full content block
+    doc.rect(left, contentTop, width, y - contentTop).stroke();
+
+    doc.fontSize(7).fillColor('#666666')
+      .text('This is a Computer Generated Delivery Challan', left, y + 4, {
+        width,
+        align: 'center',
+      });
+    doc.fillColor('#000000');
 
     doc.end();
   });

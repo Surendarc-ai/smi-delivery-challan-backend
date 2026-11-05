@@ -6,6 +6,8 @@ const lineSchema = new mongoose.Schema({
   description: { type: String, required: true, trim: true },
   hsnCode: { type: String, default: '', trim: true },
   quantity: { type: Number, required: true, min: 0 },
+  rate: { type: Number, default: 0, min: 0 },
+  amount: { type: Number, default: 0, min: 0 },
   unit: { type: String, default: 'Nos' },
 }, { _id: false });
 
